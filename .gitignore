@@ -10,3 +10,4 @@ backend/*.db-*
 .env.local
 *.pyc
 preview/
+*.tsbuildinfo

@@ -29,7 +29,7 @@ In another terminal:
 
 ```powershell
 cd frontend
-npm install
+npm ci
 npm run dev
 ```
 
@@ -80,7 +80,11 @@ Interactive API docs are at `/docs` on the backend service. All zone and record 
 
 ## Verification
 
-From `backend/`, run `python -m unittest -v test_api.py`. From `frontend/`, run `npm run lint` and `npm run build` after installing dependencies. The backend tests exercise authentication, persistence, CRUD, validation, import/export, and bulk deletion.
+From `backend/`, install `pip install -r requirements-dev.txt`, then run `python -m unittest -v test_api.py`. From `frontend/`, run `npm run lint` and `npm run build` after installing dependencies.
+
+The 10 backend tests exercise every implemented API operation, CRUD for all nine required record types, private zones, tags, search/filtering, pagination, authentication, session and data persistence across application lifespans, JSON/BIND export, BIND import, bulk deletion, and selected validation/error paths. These are API integration tests; browser interactions, exact visual similarity, and the hosted deployment still require separate verification.
+
+The BIND importer currently supports explicit record owners, integer TTL values, `$ORIGIN`, `$TTL`, parenthesized records, and comments outside quoted strings. It is a basic importer rather than a complete BIND parser; shorthand owners and TTL units such as `1h` remain unsupported.
 
 ## Deployment
 

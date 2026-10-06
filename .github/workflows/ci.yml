@@ -12,7 +12,7 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: '3.13'
-      - run: pip install -r backend/requirements.txt httpx
+      - run: pip install -r backend/requirements-dev.txt
       - run: python -m unittest -v test_api.py
         working-directory: backend
 
@@ -23,7 +23,7 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: '22'
-      - run: npm install
+      - run: npm ci
         working-directory: frontend
       - run: npm run lint
         working-directory: frontend
