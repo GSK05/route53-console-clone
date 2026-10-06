@@ -74,6 +74,27 @@ The UI uses one client-side console component for the AWS-style shell and screen
 
 Interactive API docs are at `/docs` on the backend service. All zone and record endpoints require the session cookie.
 
+## BIND import
+
+The importer supports explicit owners, `@` for the zone root, relative owner names, and omitted owners. A record beginning with a space or tab inherits the owner of the preceding record. Explicit owners must start in the first column. Blank lines, comments, and `$TTL` directives do not reset the preceding owner.
+
+TTL values can be integer seconds or case-insensitive `w`, `d`, `h`, `m`, and `s` units. Combined values such as `1h30m` are supported. Both `$TTL` and individual record TTLs use the same parser, with a range of 0–2147483647 seconds. An omitted TTL uses `$TTL` when supplied; otherwise it inherits the preceding record's TTL, with 300 seconds as the initial fallback. TTL and `IN` class may appear in either order.
+
+Example file for `example.com`:
+
+```bind
+$ORIGIN example.com.
+$TTL 1h
+www IN A 192.0.2.10
+    IN A 192.0.2.11
+mail IN 30m MX 10 mail.example.com.
+    30m IN MX 20 backup.example.com.
+```
+
+This creates a `www` A record set with two values and a 3600-second TTL, and a `mail` MX record set with two values and an 1800-second TTL. Invalid input fails the import before any records are committed. Error messages include the source line where possible. Existing records are not overwritten; the importer rejects conflicting name/type combinations.
+
+Parenthesized records and comments outside quoted strings are supported. Default apex NS and SOA records are skipped, but still establish an owner for later shorthand rows. `$ORIGIN` must match the selected hosted zone. `$INCLUDE`, `$GENERATE`, nested origin changes, and arbitrary escaped owner names are not supported. Use fully qualified targets with trailing dots for domain-valued record data.
+
 ## Keyboard shortcuts
 
 `/` focuses the current table search, `N` starts zone or record creation, `Esc` closes dialogs, and `?` shows shortcut help.
@@ -82,9 +103,9 @@ Interactive API docs are at `/docs` on the backend service. All zone and record 
 
 From `backend/`, install `pip install -r requirements-dev.txt`, then run `python -m unittest -v test_api.py`. From `frontend/`, run `npm run lint` and `npm run build` after installing dependencies.
 
-The 10 backend tests exercise every implemented API operation, CRUD for all nine required record types, private zones, tags, search/filtering, pagination, authentication, session and data persistence across application lifespans, JSON/BIND export, BIND import, bulk deletion, and selected validation/error paths. These are API integration tests; browser interactions, exact visual similarity, and the hosted deployment still require separate verification.
+The 15 backend tests exercise every implemented API operation, CRUD for all nine required record types, private zones, tags, search/filtering, pagination, authentication, session and data persistence across application lifespans, JSON/BIND export, BIND import, bulk deletion, and selected validation/error paths. Import tests include shorthand owners, system-record inheritance, TTL units and combined units, TTL defaults and boundaries, and failures without partial writes.
 
-The BIND importer currently supports explicit record owners, integer TTL values, `$ORIGIN`, `$TTL`, parenthesized records, and comments outside quoted strings. It is a basic importer rather than a complete BIND parser; shorthand owners and TTL units such as `1h` remain unsupported.
+Latest local verification: all 15 API integration tests pass. Frontend TypeScript checks (`npm run lint`) and the production build (`npm run build`) also pass. Browser interactions, exact visual similarity, and the hosted deployment still require separate verification. The BIND importer supports the documented subset above rather than the complete BIND grammar.
 
 ## Deployment
 

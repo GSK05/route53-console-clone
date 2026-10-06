@@ -242,7 +242,7 @@ def normalized_name(name: str, zone_name: str):
     if absolute and name != zone_name and not name.endswith("." + zone_name):
         raise HTTPException(422, "Record name must be inside the hosted zone")
     fqdn = name if name == zone_name or name.endswith("." + zone_name) else f"{name}.{zone_name}"
-    if not fqdn.endswith("." + zone_name) or not DOMAIN_RE.fullmatch(fqdn):
+    if (fqdn != zone_name and not fqdn.endswith("." + zone_name)) or not DOMAIN_RE.fullmatch(fqdn):
         raise HTTPException(422, "Record name must be inside the hosted zone")
     return fqdn
 
@@ -377,20 +377,22 @@ class ZoneImportIn(BaseModel):
 
 
 def bind_lines(content: str):
-    """Join parenthesized records and ignore comments outside quoted strings."""
-    chunks, start_line, depth = [], 1, 0
+    """Preserve owner omission while joining records and stripping comments."""
+    chunks, start_line, depth, owner_omitted = [], 1, 0, False
     for line_number, raw in enumerate(content.splitlines(), 1):
         quoted, escaped, clean = False, False, []
         for char in raw:
             if char == '"' and not escaped:
                 quoted = not quoted
-            if char == ";" and not quoted:
+            if char == ";" and not quoted and not escaped:
                 break
-            if not quoted and char == "(":
+            if not quoted and not escaped and char == "(":
                 depth += 1
                 char = " "
-            elif not quoted and char == ")":
+            elif not quoted and not escaped and char == ")":
                 depth -= 1
+                if depth < 0:
+                    raise HTTPException(422, f"Line {line_number}: unexpected closing parenthesis")
                 char = " "
             clean.append(char)
             escaped = char == "\\" and not escaped
@@ -399,13 +401,51 @@ def bind_lines(content: str):
         fragment = "".join(clean).strip()
         if fragment and not chunks:
             start_line = line_number
+            owner_omitted = bool(raw and raw[0].isspace())
         if fragment:
             chunks.append(fragment)
         if depth <= 0 and chunks:
-            yield start_line, " ".join(chunks)
+            yield start_line, " ".join(chunks), owner_omitted
             chunks, depth = [], 0
     if chunks:
         raise HTTPException(422, "Unclosed parenthesized record in zone file")
+
+
+def parse_bind_ttl(value: str):
+    """Read integer seconds or BIND unit sequences such as 1h30m."""
+    if not re.fullmatch(r"(?:[0-9]+[wdhms]?)+", value, re.I):
+        raise ValueError(f"Invalid TTL '{value}'; use seconds or w/d/h/m/s units")
+    units = {"": 1, "s": 1, "m": 60, "h": 3600, "d": 86400, "w": 604800}
+    ttl = sum(int(amount) * units[unit.lower()] for amount, unit in re.findall(r"([0-9]+)([wdhms]?)", value, re.I))
+    if ttl > 2147483647:
+        raise ValueError("TTL must be between 0 and 2147483647 seconds")
+    return ttl
+
+
+def parse_bind_header(parts: list[str], owner_omitted: bool, last_owner: str | None, zone_name: str):
+    if owner_omitted:
+        if last_owner is None:
+            raise ValueError("An omitted owner needs a preceding record with an explicit owner")
+        owner, index = last_owner, 0
+    else:
+        owner, index = normalized_name(parts[0], zone_name), 1
+    ttl, class_seen = None, False
+    while index < len(parts) and parts[index].upper() not in RECORD_TYPES:
+        field = parts[index]
+        if field.upper() in {"IN", "CH", "HS"}:
+            if field.upper() != "IN":
+                raise ValueError("Only IN-class records are supported")
+            if class_seen:
+                raise ValueError("Record class is specified more than once")
+            class_seen = True
+        else:
+            if ttl is not None:
+                raise ValueError("TTL is specified more than once")
+            ttl = parse_bind_ttl(field)
+        index += 1
+    if index >= len(parts) or index + 1 >= len(parts):
+        raise ValueError("Record type and value are required")
+    return owner, parts[index].upper(), ttl, parts[index + 1:]
 
 
 @app.post("/api/zones/{zone_id}/import")
@@ -415,39 +455,41 @@ def import_zone(zone_id: str, body: ZoneImportIn, _: str = Depends(require_auth)
     text = body.content.lstrip("\ufeff")
     with db() as conn:
         zone = get_zone(conn, zone_id)
-        origin, ttl, pending, errors = zone["name"], 300, [], []
-        for line_number, line in bind_lines(text):
-            if not line:
-                continue
-            if line.upper().startswith("$ORIGIN "):
-                origin = line.split(None, 1)[1].rstrip(".").lower()
-                if origin != zone["name"]:
-                    errors.append(f"Line {line_number}: origin must match {zone['name']}")
-                continue
-            if line.upper().startswith("$TTL "):
-                try:
-                    ttl = int(line.split(None, 1)[1])
-                except ValueError:
-                    errors.append(f"Line {line_number}: invalid TTL")
-                continue
+        default_ttl, last_ttl, last_owner = None, 300, None
+        pending, errors = [], []
+        for line_number, line, owner_omitted in bind_lines(text):
             try:
                 parts = shlex.split(line)
-                idx = next(i for i, part in enumerate(parts) if part.upper() in RECORD_TYPES)
-                owner, kind = parts[0], parts[idx].upper()
+                if not parts:
+                    continue
+                if parts[0].upper() == "$ORIGIN":
+                    if len(parts) != 2 or parts[1].rstrip(".").lower() != zone["name"]:
+                        raise ValueError(f"Origin must match {zone['name']}")
+                    continue
+                if parts[0].upper() == "$TTL":
+                    if len(parts) != 2:
+                        raise ValueError("$TTL requires a single TTL value")
+                    default_ttl = parse_bind_ttl(parts[1])
+                    continue
+                if parts[0].startswith("$"):
+                    raise ValueError(f"Unsupported directive: {parts[0]}")
+                fqdn, kind, explicit_ttl, rdata = parse_bind_header(parts, owner_omitted, last_owner, zone["name"])
+                item_ttl = explicit_ttl if explicit_ttl is not None else (default_ttl if default_ttl is not None else last_ttl)
+                # Skipped system records still establish an owner for shorthand rows.
+                last_owner, last_ttl = fqdn, item_ttl
                 if kind == "SOA":
                     continue
-                item_ttl = next((int(part) for part in parts[1:idx] if part.isdigit()), ttl)
-                value = " ".join(parts[idx + 1:])
+                value = " ".join(rdata)
                 if kind == "TXT":
                     value = '"' + value.replace('"', '\\"') + '"'
-                fqdn = normalized_name(owner if owner != "@" else "", zone["name"])
                 if fqdn == zone["name"] and kind == "NS":
                     continue
                 candidate = RecordIn(name=fqdn, type=kind, ttl=item_ttl, values=[value])
                 validated_record(candidate, zone["name"])
                 pending.append((fqdn, kind, item_ttl, value))
-            except Exception:
-                errors.append(f"Line {line_number}: unsupported or invalid record")
+            except (ValueError, HTTPException) as error:
+                detail = error.detail if isinstance(error, HTTPException) else str(error)
+                errors.append(f"Line {line_number}: {detail}")
         if errors:
             raise HTTPException(422, {"errors": errors})
         grouped = {}

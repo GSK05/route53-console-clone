@@ -75,6 +75,89 @@ class ConsoleApiTests(unittest.TestCase):
         self.assertEqual(response.status_code, 200, response.text)
         self.assertEqual(response.json()["imported"], 1)
 
+    def test_bind_shorthand_owners_and_ttl_units(self):
+        zone = self.make_zone()
+        content = (
+            "$ORIGIN example.com.\n$TTL\t1h\n"
+            "www IN A 192.0.2.1\n"
+            "; A comment and blank line do not reset the previous owner.\n\n"
+            "\tIN A 192.0.2.2\n"
+            "    1H IN AAAA 2001:db8::1\n"
+            "mail IN 1h30m MX 10 mail.example.com.\n"
+            "    IN 90M MX 20 backup.example.com.\n"
+            "app 1w2d3h4m5s IN A 192.0.2.3\n"
+            "$TTL 2H\n"
+            "    TXT \"same owner; new default TTL\"\n"
+            "a IN A 192.0.2.4\n"
+            "mx IN A 192.0.2.5\n"
+        )
+        response = self.client.post(f"/api/zones/{zone['id']}/import", json={"content": content})
+        self.assertEqual(response.status_code, 200, response.text)
+        self.assertEqual(response.json()["imported"], 7)
+        records = {(r["name"], r["type"]): r for r in self.client.get(self.record_url(zone)).json()["items"]}
+        self.assertEqual(records[("www.example.com", "A")]["values"], ["192.0.2.1", "192.0.2.2"])
+        self.assertEqual(records[("www.example.com", "A")]["ttl"], 3600)
+        self.assertEqual(records[("www.example.com", "AAAA")]["ttl"], 3600)
+        self.assertEqual(records[("mail.example.com", "MX")]["ttl"], 5400)
+        self.assertEqual(len(records[("mail.example.com", "MX")]["values"]), 2)
+        self.assertEqual(records[("app.example.com", "A")]["ttl"], 788645)
+        self.assertEqual(records[("app.example.com", "TXT")]["ttl"], 7200)
+        self.assertEqual(records[("a.example.com", "A")]["ttl"], 7200)
+
+    def test_bind_skipped_system_record_retains_owner_and_default_ttl(self):
+        zone = self.make_zone()
+        content = (
+            "$TTL 1d\n"
+            "@ IN SOA ns.example.com. hostmaster.example.com. (\n"
+            " 1 1h 15m 1w 1h )\n"
+            "    IN NS ns.example.com.\n"
+            "    IN A 192.0.2.1\n"
+            "short 30m IN A 192.0.2.2\n"
+            "next IN A 192.0.2.3\n"
+        )
+        response = self.client.post(f"/api/zones/{zone['id']}/import", json={"content": content})
+        self.assertEqual(response.status_code, 200, response.text)
+        self.assertEqual(response.json()["imported"], 3)
+        records = {r["name"]: r for r in self.client.get(self.record_url(zone), params={"type": "A"}).json()["items"]}
+        self.assertEqual(records["example.com"]["ttl"], 86400)
+        self.assertEqual(records["short.example.com"]["ttl"], 1800)
+        self.assertEqual(records["next.example.com"]["ttl"], 86400)
+
+    def test_bind_ttl_inheritance_without_directive(self):
+        zone = self.make_zone()
+        response = self.client.post(f"/api/zones/{zone['id']}/import", json={"content": "www 30m A 192.0.2.1\n    A 192.0.2.2\nnext A 192.0.2.3"})
+        self.assertEqual(response.status_code, 200, response.text)
+        records = self.client.get(self.record_url(zone), params={"type": "A"}).json()["items"]
+        self.assertEqual([r["ttl"] for r in records], [1800, 1800])
+
+    def test_bind_ttl_boundaries_and_units(self):
+        zone = self.make_zone()
+        values = [("0", 0), ("1s", 1), ("2M", 120), ("3h", 10800), ("4D", 345600), ("1w", 604800), ("2147483647", 2147483647)]
+        content = "\n".join(f"ttl-{i} {ttl} IN A 192.0.2.1" for i, (ttl, _) in enumerate(values))
+        response = self.client.post(f"/api/zones/{zone['id']}/import", json={"content": content})
+        self.assertEqual(response.status_code, 200, response.text)
+        records = {r["name"]: r["ttl"] for r in self.client.get(self.record_url(zone), params={"type": "A"}).json()["items"]}
+        for i, (_, expected) in enumerate(values):
+            self.assertEqual(records[f"ttl-{i}.example.com"], expected)
+
+    def test_bind_invalid_shorthand_and_ttl_fail_without_partial_import(self):
+        zone = self.make_zone()
+        url = f"/api/zones/{zone['id']}/import"
+        missing_owner = self.client.post(url, json={"content": "    IN A 192.0.2.1\n"})
+        self.assertEqual(missing_owner.status_code, 422)
+        self.assertIn("preceding record", missing_owner.json()["detail"]["errors"][0])
+        bad_rows = [
+            "$TTL 1y", "$TTL -1", "$TTL 1h30mgarbage", "$TTL 2147483648",
+            "bad 9999w IN A 192.0.2.2", "bad 1h 2h IN A 192.0.2.2",
+            "bad IN IN A 192.0.2.2", "bad IN 1.5h A 192.0.2.2",
+            "    2h IN A 192.0.2.2",  # Same name/type with inconsistent TTL.
+        ]
+        for row in bad_rows:
+            with self.subTest(row=row):
+                response = self.client.post(url, json={"content": "valid 1h IN A 192.0.2.1\n" + row})
+                self.assertEqual(response.status_code, 422, response.text)
+                self.assertEqual(self.client.get(self.record_url(zone)).json()["total"], 2)
+
     def test_auth_and_validation(self):
         self.client.post("/api/auth/logout")
         self.assertEqual(self.client.get("/api/zones").status_code, 401)
