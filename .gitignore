@@ -11,3 +11,4 @@ backend/*.db-*
 *.pyc
 preview/
 *.tsbuildinfo
+backend/backups/

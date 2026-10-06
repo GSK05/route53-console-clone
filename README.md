@@ -4,14 +4,16 @@ A Next.js and FastAPI application that recreates the key Route 53 hosted zone an
 
 ## Features
 
-- Mock login, logout, and a seven-day HTTP-only cookie session.
+- Self-service signup for Personal and Organization accounts, login by username or email, logout, and a seven-day HTTP-only cookie session.
+- Private workspaces: hosted zones, records, imports, exports, and mock service data are scoped to the authenticated account.
+- Mock IAM identity/policy management, account settings, organizations with simulated member accounts, and account-specific billing usage.
 - Public and private hosted zones with search, pagination, create, view, comment edit, and delete.
 - A, AAAA, CNAME, TXT, MX, NS, PTR, SRV, and CAA records with validation and persistent CRUD.
 - Route 53-style tables, filters, notifications, confirmation dialogs, navigation, and placeholder sections.
 - BIND zone-file import; JSON and BIND export; dark mode; keyboard shortcuts; bulk record deletion.
 - Default NS and SOA records for public zones. These are displayed but protected from editing/deletion.
 
-The app follows AWS's hosted zone edit behavior: the description/comment can be edited, but the name and public/private type cannot be changed after creation. It supports simple routing and non-alias records. AWS-specific alias targets, VPC discovery, DNS resolution, billing, IAM, and advanced routing policies are outside the assignment's core CRUD scope.
+The app follows AWS's hosted zone edit behavior: the description/comment can be edited, but the name and public/private type cannot be changed after creation. It supports simple routing and non-alias records. AWS-specific alias targets, VPC discovery, DNS resolution, and advanced routing policies are outside the implemented scope. IAM, Accounts, Organizations, and Billing are local simulations.
 
 ## Run locally
 
@@ -33,9 +35,21 @@ npm ci
 npm run dev
 ```
 
-Open <http://localhost:3000>. The default login is `demo` / `route53demo`. Set `DEMO_USER` and `DEMO_PASSWORD` on the backend to change it. `DATABASE_PATH` defaults to `backend/route53.db`. The Next.js proxy uses `BACKEND_URL`, which defaults to `http://127.0.0.1:8000`.
+Open <http://localhost:3000> and choose **Create an account**. Supply an account name, unique username and email, and a password of at least 12 characters. Personal and Organization accounts both start with an empty, independent DNS workspace; Organization signup also creates a mock organization profile. `DATABASE_PATH` defaults to `backend/route53.db`. The Next.js proxy uses `BACKEND_URL`, which defaults to `http://127.0.0.1:8000`.
 
-Alternatively, run `docker compose up --build` from the repository root. The Compose setup stores SQLite in the named `route53_data` volume, so data survives container recreation. Copy `.env.example` to `.env` to customize the demo credentials. When serving over HTTPS, set `COOKIE_SECURE=true`.
+Alternatively, copy `.env.example` to `.env` and run `docker compose up --build` from the repository root. The Compose setup stores SQLite in the named `route53_data` volume, so data survives container recreation. Demo access is disabled by default. For local sample data only, set `SEED_DEMO=true` on the backend; this enables `demo` / `route53demo` (customizable with `DEMO_USER` and `DEMO_PASSWORD`).
+
+### Credentials and isolation
+
+Passwords are stored as salted PBKDF2-HMAC-SHA256 hashes with 600,000 iterations. Random session tokens are stored as SHA-256 digests; cookies are HTTP-only, SameSite=Lax, and expire after seven days. Signup and login have rate limits. Browser mutations check the request Origin against `ALLOWED_ORIGINS`; API responses use `Cache-Control: no-store`.
+
+Every zone operation verifies ownership on the server before accessing records, tags, import, export, or bulk deletion. Requests for another account's resource return 404. Account and mock-service endpoints also enforce ownership. The UI clears workspace state when accounts change, including changes in another tab.
+
+Use the account menu or sidebar to open Account settings, IAM, Organizations, and Billing. Mock IAM policy labels do not grant real permissions or create login credentials. Organization member accounts are simulated entries, without app logins or shared DNS access. Billing shows only your account's usage and an illustrative $0.50 per zone total; it collects no payment. Signup account types are Personal and Organization, each with an account-owner identity.
+
+On first startup after upgrading an older database, existing zones, records, and tags remain intact and their zones are assigned to the reserved local demo account. Old sessions are invalidated. Back up the SQLite database before upgrading. Enable `SEED_DEMO=true` locally to access that legacy data; new registrations cannot see it. Changing `DEMO_PASSWORD` does not replace an already stored demo password.
+
+Email verification, password recovery, MFA, and invitations for shared workspaces are not implemented.
 
 ## Architecture
 
@@ -49,8 +63,14 @@ The UI uses one client-side console component for the AWS-style shell and screen
 
 | Table | Purpose | Key fields |
 | --- | --- | --- |
-| `sessions` | Mock login persistence | token, username, expires_at |
-| `hosted_zones` | Public/private zones | id, name, type, comment, VPC fields, name_servers, timestamps |
+| `accounts` | Independent workspaces | id, name, account_type, created_at, is_demo |
+| `users` | Registered credentials | id, unique username/email, password_hash, account_id |
+| `sessions` | Login persistence | token digest, username, expires_at |
+| `auth_attempts` | Login/signup rate limits | hashed key, attempts, expires_at |
+| `mock_iam_users` | Simulated IAM identities | id, account_id, name, policy |
+| `mock_organizations` | Simulated organizations | account_id, id, name |
+| `mock_org_accounts` | Simulated member accounts | id, owner_account_id, name, email |
+| `hosted_zones` | Public/private zones | id, account_id, name, type, comment, VPC fields, name_servers, timestamps |
 | `tags` | Zone tags | zone_id, key, value |
 | `records` | DNS record sets | id, zone_id, name, type, ttl, values_json, routing_policy, is_default, timestamps |
 
@@ -60,9 +80,18 @@ The UI uses one client-side console component for the AWS-style shell and screen
 
 | Method | Path | Purpose |
 | --- | --- | --- |
+| POST | `/api/auth/register` | Register an independent account and create session |
 | POST | `/api/auth/login` | Create session |
 | POST | `/api/auth/logout` | End session |
 | GET | `/api/auth/me` | Check session |
+| GET, PATCH | `/api/account` | Own profile and account name |
+| GET | `/api/mock/iam` | Own mock IAM identities and principal |
+| POST | `/api/mock/iam/users` | Create mock identity |
+| PUT, DELETE | `/api/mock/iam/users/{id}` | Edit/delete own mock identity |
+| GET, POST, PATCH | `/api/mock/organizations` | Own mock organization |
+| POST | `/api/mock/organizations/accounts` | Add mock member account |
+| DELETE | `/api/mock/organizations/accounts/{id}` | Remove own mock member |
+| GET | `/api/mock/billing` | Own illustrative usage and cost |
 | GET, POST | `/api/zones` | Search/list and create zones |
 | GET, PATCH, DELETE | `/api/zones/{id}` | View, edit comment, delete zone |
 | GET, POST | `/api/zones/{id}/records` | Search/list and create record sets |
@@ -101,14 +130,22 @@ Parenthesized records and comments outside quoted strings are supported. Default
 
 ## Verification
 
-From `backend/`, install `pip install -r requirements-dev.txt`, then run `python -m unittest -v test_api.py`. From `frontend/`, run `npm test`, `npm run lint`, and `npm run build` after installing dependencies.
+From `backend/`, install `pip install -r requirements-dev.txt`, then run `python -m unittest discover -v`. From `frontend/`, run `npm test`, `npm run lint`, and `npm run build` after installing dependencies.
 
-The 16 backend tests exercise every implemented API operation, CRUD for all nine required record types, private zones, tags, search/filtering, pagination, authentication, session and data persistence across application lifespans, JSON/BIND export, BIND import, bulk deletion, and selected validation/error paths. Import tests include shorthand owners, system-record inheritance, TTL units and combined units, TTL defaults and boundaries, and failures without partial writes. Hosted-zone tests verify the submitted form payload and field-specific domain validation details.
+The 24 backend tests cover CRUD for all nine required record types, private zones, tags, search/filtering, pagination, authentication, persistence, JSON/BIND export, import, bulk deletion, and validation. Account tests verify credential and session hashing, duplicate identities, signup types, session rotation/expiry, rate limits, browser-origin protection, legacy migration, disabled deployment demo access, mock-service isolation, and rejection of another account's zone/record operations including import, export, and bulk deletion.
 
-Latest local verification: all 16 API integration tests and four frontend error-handling tests pass. Frontend TypeScript checks (`npm run lint`) and the production build (`npm run build`) also pass. Browser interactions, exact visual similarity, and the hosted deployment still require separate verification. The BIND importer supports the documented subset above rather than the complete BIND grammar.
+Latest local verification: all 24 API integration tests and five frontend error-handling tests pass. Frontend TypeScript checks and the production build pass. Browser interactions, exact visual similarity, and hosted deployment still require separate verification. The BIND importer supports the documented subset above.
 
 If hosted-zone creation is rejected, the form displays the server's validation reason and field rather than only the HTTP status. Enter a domain such as `example.com`, without a URL scheme or path. Private zones also require the mocked VPC region and ID. A 422 response means the request failed validation; correct the displayed field and submit again.
 
 ## Deployment
 
-Repository name: **`GSK05/route53-console-clone`**. A single Docker host or platform with a persistent volume is the simplest deployment. Run the Compose setup behind HTTPS, set a non-default `DEMO_PASSWORD`, and persist `/data`. A deployment that discards its filesystem will also discard SQLite data, so an ephemeral backend host is unsuitable without an attached persistent disk.
+Repository name: **`GSK05/route53-console-clone`**. Deploy the Compose setup on a host with a persistent disk, behind HTTPS. Set these environment values before starting:
+
+```dotenv
+COOKIE_SECURE=true
+SEED_DEMO=false
+ALLOWED_ORIGINS=https://your-console.example.com
+```
+
+Persist `/data` and back it up. Do not publish the backend port; browser requests go through the same-origin Next.js proxy. A fresh deployment starts with no accounts or zones, and visitors create their own credentials. Keep demo access disabled on a public deployment. An ephemeral backend without persistent storage loses both accounts and DNS data. This SQLite setup is intended for one backend instance; multiple replicas need a shared database design. Run signup, login, and a two-account isolation smoke check on the deployed HTTPS URL before sharing it.

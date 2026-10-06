@@ -13,7 +13,7 @@ jobs:
         with:
           python-version: '3.13'
       - run: pip install -r backend/requirements-dev.txt
-      - run: python -m unittest -v test_api.py
+      - run: python -m unittest discover -v
         working-directory: backend
 
   frontend:

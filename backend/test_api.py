@@ -18,8 +18,9 @@ class ConsoleApiTests(unittest.TestCase):
         main.DATABASE = main.Path(self.temp.name) / "test.db"
         self.client_context = TestClient(main.app)
         self.client = self.client_context.__enter__()
-        response = self.client.post("/api/auth/login", json={"username": main.DEMO_USER, "password": main.DEMO_PASSWORD})
-        self.assertEqual(response.status_code, 200)
+        self.credentials = {"username": "tester", "password": "Route53Test!2026"}
+        response = self.client.post("/api/auth/register", json={**self.credentials, "email": "tester@example.com", "account_name": "Test account", "account_type": "personal"})
+        self.assertEqual(response.status_code, 201, response.text)
 
     def tearDown(self):
         self.client_context.__exit__(None, None, None)
@@ -161,14 +162,14 @@ class ConsoleApiTests(unittest.TestCase):
     def test_auth_and_validation(self):
         self.client.post("/api/auth/logout")
         self.assertEqual(self.client.get("/api/zones").status_code, 401)
-        self.client.post("/api/auth/login", json={"username": main.DEMO_USER, "password": main.DEMO_PASSWORD})
+        self.client.post("/api/auth/login", json=self.credentials)
         zone = self.client.post("/api/zones", json={"name": "example.net", "type": "public"}).json()
         self.assertEqual(self.client.post(f"/api/zones/{zone['id']}/records", json={"name": "", "type": "CNAME", "ttl": 300, "values": ["www.example.net"]}).status_code, 422)
         self.assertEqual(self.client.post(f"/api/zones/{zone['id']}/records", json={"name": "app", "type": "A", "ttl": 300, "values": ["not-an-ip"]}).status_code, 422)
 
     def test_health_login_session_and_restart_persistence(self):
         self.assertEqual(self.client.get("/api/health").json(), {"status": "ok"})
-        self.assertEqual(self.client.get("/api/auth/me").json(), {"username": main.DEMO_USER})
+        self.assertEqual(self.client.get("/api/auth/me").json()["username"], self.credentials["username"])
         zone = self.make_zone(comment="Survives restart")
         record = self.client.post(self.record_url(zone), json={"name": "www", "type": "A", "ttl": 300, "values": ["192.0.2.1"]}).json()
         session = self.client.cookies.get("session")
@@ -179,7 +180,7 @@ class ConsoleApiTests(unittest.TestCase):
             self.assertEqual(restarted.get(f"/api/zones/{zone['id']}").json()["comment"], "Survives restart")
             saved = restarted.get(self.record_url(zone), params={"q": "www"}).json()["items"]
             self.assertEqual(saved[0]["id"], record["id"])
-        self.assertEqual(self.client.post("/api/auth/login", json={"username": main.DEMO_USER, "password": "wrong-password"}).status_code, 401)
+        self.assertEqual(self.client.post("/api/auth/login", json={"username": self.credentials["username"], "password": "wrong-password"}).status_code, 401)
         self.assertEqual(self.client.post("/api/auth/logout").status_code, 200)
         self.assertEqual(self.client.get("/api/auth/me").status_code, 401)
 

@@ -11,12 +11,21 @@ export type RecordSet = {
 };
 export type PageResult<T> = { items: T[]; total: number; page: number; page_size: number };
 
+export type User = {
+  id: string; username: string; email: string; account_id: string; account_name: string;
+  account_type: 'personal' | 'organization'; role: string; is_demo: boolean; created_at: string;
+};
+
+export class ApiError extends Error {
+  constructor(message: string, public status: number) { super(message); this.name = 'ApiError'; }
+}
+
 type ValidationDetail = { loc?: (string | number)[]; msg?: string };
 
 function errorMessage(detail: unknown, status: number): string {
   if (typeof detail === 'string') return detail;
   if (Array.isArray(detail)) {
-    const labels: Record<string, string> = { name: 'Domain name', type: 'Zone type', comment: 'Description', tags: 'Tags', vpc_region: 'VPC region', vpc_id: 'VPC ID' };
+    const labels: Record<string, string> = { name: 'Name', type: 'Zone type', comment: 'Description', tags: 'Tags', vpc_region: 'VPC region', vpc_id: 'VPC ID', account_name: 'Account name', account_type: 'Account type', username: 'Username', email: 'Email', password: 'Password' };
     const messages = (detail as ValidationDetail[]).map(issue => {
       const fields = (issue.loc || []).filter(part => !['body', 'query', 'path'].includes(String(part)));
       const field = fields.map(part => labels[String(part)] || String(part)).join(' › ');
@@ -40,7 +49,7 @@ export async function api<T>(path: string, options: RequestInit = {}): Promise<T
   });
   if (!response.ok) {
     const data = await response.json().catch(() => ({}));
-    throw new Error(errorMessage(data.detail, response.status));
+    throw new ApiError(errorMessage(data.detail, response.status), response.status);
   }
   return response.status === 204 ? (undefined as T) : response.json();
 }

@@ -19,7 +19,7 @@ function client(status, payload) {
 
 test('FastAPI field validation reports the domain and its reason', async () => {
   const api = client(422, { detail: [{ loc: ['body', 'name'], msg: 'Value error, Enter a domain such as example.com' }] });
-  await assert.rejects(api('/zones'), { message: 'Domain name: Enter a domain such as example.com' });
+  await assert.rejects(api('/zones'), { message: 'Name: Enter a domain such as example.com' });
 });
 
 test('multiple validation fields are included in the error', async () => {
@@ -34,4 +34,8 @@ test('private-zone and BIND errors retain their messages', async () => {
 
 test('unknown error shapes still report the HTTP status', async () => {
   await assert.rejects(client(500, {})('/zones'), { message: 'Request failed (500)' });
+});
+
+test('authentication failures retain status for clearing the signed-in workspace', async () => {
+  await assert.rejects(client(401, { detail: 'Session expired' })('/auth/me'), { message: 'Session expired', status: 401 });
 });
