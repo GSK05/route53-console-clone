@@ -9,4 +9,4 @@ backend/*.db-*
 .env
 .env.local
 *.pyc
-
+preview/
