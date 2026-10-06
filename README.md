@@ -101,11 +101,13 @@ Parenthesized records and comments outside quoted strings are supported. Default
 
 ## Verification
 
-From `backend/`, install `pip install -r requirements-dev.txt`, then run `python -m unittest -v test_api.py`. From `frontend/`, run `npm run lint` and `npm run build` after installing dependencies.
+From `backend/`, install `pip install -r requirements-dev.txt`, then run `python -m unittest -v test_api.py`. From `frontend/`, run `npm test`, `npm run lint`, and `npm run build` after installing dependencies.
 
-The 15 backend tests exercise every implemented API operation, CRUD for all nine required record types, private zones, tags, search/filtering, pagination, authentication, session and data persistence across application lifespans, JSON/BIND export, BIND import, bulk deletion, and selected validation/error paths. Import tests include shorthand owners, system-record inheritance, TTL units and combined units, TTL defaults and boundaries, and failures without partial writes.
+The 16 backend tests exercise every implemented API operation, CRUD for all nine required record types, private zones, tags, search/filtering, pagination, authentication, session and data persistence across application lifespans, JSON/BIND export, BIND import, bulk deletion, and selected validation/error paths. Import tests include shorthand owners, system-record inheritance, TTL units and combined units, TTL defaults and boundaries, and failures without partial writes. Hosted-zone tests verify the submitted form payload and field-specific domain validation details.
 
-Latest local verification: all 15 API integration tests pass. Frontend TypeScript checks (`npm run lint`) and the production build (`npm run build`) also pass. Browser interactions, exact visual similarity, and the hosted deployment still require separate verification. The BIND importer supports the documented subset above rather than the complete BIND grammar.
+Latest local verification: all 16 API integration tests and four frontend error-handling tests pass. Frontend TypeScript checks (`npm run lint`) and the production build (`npm run build`) also pass. Browser interactions, exact visual similarity, and the hosted deployment still require separate verification. The BIND importer supports the documented subset above rather than the complete BIND grammar.
+
+If hosted-zone creation is rejected, the form displays the server's validation reason and field rather than only the HTTP status. Enter a domain such as `example.com`, without a URL scheme or path. Private zones also require the mocked VPC region and ID. A 422 response means the request failed validation; correct the displayed field and submit again.
 
 ## Deployment
 

@@ -223,6 +223,19 @@ class ConsoleApiTests(unittest.TestCase):
         self.assertEqual(self.client.post("/api/zones", json={"name": "invalid domain"}).status_code, 422)
         self.assertEqual(self.client.delete(f"/api/zones/{private['id']}").status_code, 204)
 
+    def test_hosted_zone_form_payload_and_validation_details(self):
+        payload = {"name": " EXAMPLE.COM. ", "type": "public", "comment": "Form submission", "vpc_region": None, "vpc_id": None, "tags": [{"key": "Environment", "value": "Demo"}]}
+        created = self.client.post("/api/zones", json=payload)
+        self.assertEqual(created.status_code, 201, created.text)
+        self.assertEqual(created.json()["name"], "example.com")
+        for name in ("https://example.com", "example.com/path", "myzone", "invalid domain.com", ""):
+            with self.subTest(name=name):
+                response = self.client.post("/api/zones", json={**payload, "name": name})
+                self.assertEqual(response.status_code, 422)
+                detail = response.json()["detail"][0]
+                self.assertEqual(detail["loc"], ["body", "name"])
+                self.assertIn("example.com", detail["msg"])
+
     def test_record_pagination_duplicate_and_default_protection(self):
         zone = self.make_zone()
         url = self.record_url(zone)

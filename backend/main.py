@@ -142,7 +142,7 @@ class ZoneIn(BaseModel):
     def valid_name(cls, value: str):
         value = value.strip().lower().rstrip(".")
         if not DOMAIN_RE.fullmatch(value) or "." not in value:
-            raise ValueError("Enter a valid domain or subdomain")
+            raise ValueError("Enter a domain such as example.com, without https://, paths, or spaces")
         return value
 
 
