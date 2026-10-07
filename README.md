@@ -140,12 +140,22 @@ If hosted-zone creation is rejected, the form displays the server's validation r
 
 ## Deployment
 
-Repository name: **`GSK05/route53-console-clone`**. Deploy the Compose setup on a host with a persistent disk, behind HTTPS. Set these environment values before starting:
+Repository: **`GSK05/route53-console-clone`**
+
+Live application: **https://YOUR-DOMAIN**
+
+The application runs as two Railway services connected to the same repository:
+
+| Service | Root directory | Port | Access |
+| --- | --- | --- | --- |
+| `backend` | `/backend` | `8000` | Railway private network only |
+| `frontend` | `/frontend` | `3000` | Public HTTPS domain |
+
+The backend has one instance, a health check at `/api/health`, and a persistent volume mounted at `/data`. Its environment variables are:
 
 ```dotenv
+DATABASE_PATH=/data/route53.db
+PORT=8000
 COOKIE_SECURE=true
 SEED_DEMO=false
-ALLOWED_ORIGINS=https://your-console.example.com
-```
-
-Persist `/data` and back it up. Do not publish the backend port; browser requests go through the same-origin Next.js proxy. A fresh deployment starts with no accounts or zones, and visitors create their own credentials. Keep demo access disabled on a public deployment. An ephemeral backend without persistent storage loses both accounts and DNS data. This SQLite setup is intended for one backend instance; multiple replicas need a shared database design. Run signup, login, and a two-account isolation smoke check on the deployed HTTPS URL before sharing it.
+ALLOWED_ORIGINS=https://YOUR-DOMAIN
