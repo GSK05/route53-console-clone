@@ -37,7 +37,7 @@ npm run dev
 
 Open <http://localhost:3000> and choose **Create an account**. Supply an account name, unique username and email, and a password of at least 12 characters. Personal and Organization accounts both start with an empty, independent DNS workspace; Organization signup also creates a mock organization profile. `DATABASE_PATH` defaults to `backend/route53.db`. The Next.js proxy uses `BACKEND_URL`, which defaults to `http://127.0.0.1:8000`.
 
-Alternatively, copy `.env.example` to `.env` and run `docker compose up --build` from the repository root. The Compose setup stores SQLite in the named `route53_data` volume, so data survives container recreation. Demo access is disabled by default. For local sample data only, set `SEED_DEMO=true` on the backend; this enables `demo` / `route53demo` (customizable with `DEMO_USER` and `DEMO_PASSWORD`).
+Demo access is disabled by default. For local sample data only, set `SEED_DEMO=true` on the backend; this enables `demo` / `route53demo` (customizable with `DEMO_USER` and `DEMO_PASSWORD`).
 
 ### Credentials and isolation
 
