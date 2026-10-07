@@ -142,7 +142,7 @@ If hosted-zone creation is rejected, the form displays the server's validation r
 
 Repository: **`GSK05/route53-console-clone`**
 
-Live application: **https://YOUR-DOMAIN**
+Live application: **https://shakthi-route53-clone.up.railway.app/**
 
 The application runs as two Railway services connected to the same repository:
 
